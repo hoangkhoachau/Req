@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -136,7 +137,7 @@ func printRequest(req *http.Request) {
 
 func main() {
 	var positionalFlag []string
-	config := make(map[string]interface{})
+	config := make(map[string]any)
 	var data []byte
 	stat, err := os.Stdin.Stat()
 	if stat.Size() > 0 {
@@ -218,7 +219,7 @@ func main() {
 	}
 
 	// process data
-	jsonObj := map[string]interface{}{}
+	var jsonObj any
 	err = json.Unmarshal(data, &jsonObj)
 	if err == nil {
 		config["json"] = true
@@ -242,7 +243,7 @@ func main() {
 			url += fmt.Sprintf("%s=%s", split[0][:len(split[0])-2], split[1])
 		} else if strings.Contains(positionalFlag[i], ":=") {
 			split := strings.SplitAfterN(positionalFlag[i], ":=", 2)
-			subObj := map[string]interface{}{}
+			var subObj any = nil
 			if len(split[1]) > 0 && split[1][0] == '@' {
 				content, err := os.ReadFile(split[1][1:])
 				if err != nil {
@@ -256,7 +257,112 @@ func main() {
 				fmt.Println(err)
 				return
 			}
-			jsonObj[split[0][:len(split[0])-2]] = subObj
+			// jsonObj[split[0][:len(split[0])-2]] = subObj
+			key := split[0][:len(split[0])-2]
+			valid := true
+			for i := 0; i < len(key) && count >= 0; i++ {
+				if key[i] == '[' && valid {
+					valid = false
+				} else if key[i] == ']' && !valid {
+					valid = true
+				} else if key[i] == '[' || key[i] == ']' {
+					valid = false
+					break
+				}
+			}
+			if count < 0 {
+				fmt.Println("Invalid json args")
+				return
+			}
+			if key[len(key)-1] == ']' {
+				key = key[:len(key)-1]
+			}
+			key = strings.ReplaceAll(string(key), "][", "\\")
+			key = strings.ReplaceAll(string(key), "[", "\\")
+			keys := []string{""}
+			if len(key) > 1 {
+				keys = strings.Split(string(key), "\\")
+			}
+			tempObj := jsonObj
+			for i := range keys {
+				if keys[i] == "" {
+					keys[i] = "-1"
+				}
+			}
+			for i, val := range keys {
+				num, err := strconv.Atoi(val)
+				isNum := err == nil
+				if tempObj == nil {
+					if !isNum {
+						jsonObj = make(map[string]any)
+					} else {
+						arr := make([]any, max(num+1, 1))
+						jsonObj = &arr
+					}
+					tempObj = jsonObj
+				}
+				switch m := tempObj.(type) {
+				case map[string]any:
+					if isNum {
+						fmt.Println("Invalid JSON struct: Index in map")
+						return
+					}
+					if i < len(keys)-1 {
+						if _, ok := m[val]; !ok {
+							if nn, err := strconv.Atoi(keys[i+1]); err != nil {
+								m[val] = make(map[string]any)
+							} else {
+								arr := make([]any, max(nn+1, 1))
+								m[val] = &arr
+							}
+						}
+						tempObj = m[val]
+					} else {
+						m[val] = subObj
+					}
+				case *[]any:
+					if !isNum {
+						fmt.Println(err)
+						fmt.Println("Invalid JSON struct: Key in Array")
+						return
+					}
+					if num == -1 {
+						for i := range len((*m)) {
+							if (*m)[i] == nil {
+								num = i
+								break
+							}
+						}
+						if num == -1 {
+							num = len((*m))
+						}
+					}
+					if i < len(keys)-1 {
+						if num+1 > len(*m) {
+							zeros := make([]any, num+1-len(*m))
+							*m = append(*m, zeros...)
+						}
+						if (*m)[num] == nil {
+							if nn, err := strconv.Atoi(keys[i+1]); err != nil {
+								(*m)[num] = make(map[string]any)
+							} else {
+								arr := make([]any, max(nn+1, 1))
+								(*m)[num] = &arr
+							}
+						}
+						tempObj = (*m)[num]
+					} else {
+						if num+1 > len(*m) {
+							zeros := make([]any, num+1-len(*m))
+							*m = append(*m, zeros...)
+						}
+						(*m)[num] = subObj
+					}
+				default:
+					fmt.Println("Invalid JSON struct: Property Exists")
+					return
+				}
+			}
 		} else if strings.Contains(positionalFlag[i], "=") {
 			split := strings.SplitAfterN(positionalFlag[i], "=", 2)
 			if len(split[1]) > 0 && split[1][0] == '@' {
@@ -268,13 +374,112 @@ func main() {
 				split[1] = string(content)
 			}
 
-			// jsonObj[split[0][:len(split[0])-1]] = split[1]
-
-			for i := 0; i < len(split[0])-1; i++ {
-				break
+			key := split[0][:len(split[0])-1]
+			valid := true
+			for i := 0; i < len(key) && count >= 0; i++ {
+				if key[i] == '[' && valid {
+					valid = false
+				} else if key[i] == ']' && !valid {
+					valid = true
+				} else if key[i] == '[' || key[i] == ']' {
+					valid = false
+					break
+				}
+			}
+			if count < 0 {
+				fmt.Println("Invalid json args")
+				return
+			}
+			if key[len(key)-1] == ']' {
+				key = key[:len(key)-1]
+			}
+			key = strings.ReplaceAll(string(key), "][", "\\")
+			key = strings.ReplaceAll(string(key), "[", "\\")
+			keys := []string{""}
+			if len(key) > 1 {
+				keys = strings.Split(string(key), "\\")
+			}
+			var tempObj any = jsonObj
+			for i := range keys {
+				if keys[i] == "" {
+					keys[i] = "-1"
+				}
+			}
+			for i, val := range keys {
+				num, err := strconv.Atoi(val)
+				isNum := err == nil
+				if tempObj == nil {
+					if !isNum {
+						jsonObj = make(map[string]any)
+					} else {
+						arr := make([]any, max(num+1, 1))
+						jsonObj = &arr
+					}
+					tempObj = jsonObj
+				}
+				switch m := tempObj.(type) {
+				case map[string]any:
+					if isNum {
+						fmt.Println("Invalid JSON struct: Index in map")
+						return
+					}
+					if i < len(keys)-1 {
+						if _, ok := m[val]; !ok {
+							if nn, err := strconv.Atoi(keys[i+1]); err != nil {
+								m[val] = make(map[string]any)
+							} else {
+								arr := make([]any, max(nn+1, 1))
+								m[val] = &arr
+							}
+						}
+						tempObj = m[val]
+					} else {
+						m[val] = split[1]
+					}
+				case *[]any:
+					if !isNum {
+						fmt.Println(err)
+						fmt.Println("Invalid JSON struct: Key in Array")
+						return
+					}
+					if num == -1 {
+						for i := range len((*m)) {
+							if (*m)[i] == nil {
+								num = i
+								break
+							}
+						}
+						if num == -1 {
+							num = len((*m))
+						}
+					}
+					if i < len(keys)-1 {
+						if num+1 > len(*m) {
+							zeros := make([]any, num+1-len(*m))
+							*m = append(*m, zeros...)
+						}
+						if (*m)[num] == nil {
+							if nn, err := strconv.Atoi(keys[i+1]); err != nil {
+								(*m)[num] = make(map[string]any)
+							} else {
+								arr := make([]any, max(nn+1, 1))
+								(*m)[num] = &arr
+							}
+						}
+						tempObj = (*m)[num]
+					} else {
+						if num+1 > len(*m) {
+							zeros := make([]any, num+1-len(*m))
+							*m = append(*m, zeros...)
+						}
+						(*m)[num] = split[1]
+					}
+				default:
+					fmt.Println("Invalid JSON struct: Property Exists")
+					return
+				}
 			}
 
-			jsonObj[split[0][:len(split[0])-1]] = split[1]
 		} else if strings.Contains(positionalFlag[i], ":") {
 			split := strings.SplitAfterN(positionalFlag[i], ":", 2)
 			if len(split[1]) > 0 && split[1][0] == '@' {
@@ -289,7 +494,7 @@ func main() {
 			// header[split[0][:len(split[0])-1]] = split[1]
 		}
 	}
-	if len(jsonObj) != 0 {
+	if jsonObj != nil {
 		data, err = json.Marshal(jsonObj)
 		if err != nil {
 			fmt.Println(err)
